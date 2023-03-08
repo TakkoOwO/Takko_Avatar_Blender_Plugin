@@ -1,0 +1,13 @@
+import bpy
+class Ao_Bake_Tool_Ui(bpy.types.Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_label = "AO烘焙工具"
+    bl_idname = "VIEW_3D_PT_AO_BAKE_TOOL_UI"    
+    bl_category = '獭可工具'   
+    bl_order = 6
+        
+    def draw(self, context):        
+        layout = self.layout
+        layout.prop(context.scene,'ao_bake_tool_target_texture',text = "目标贴图 ")
+        layout.operator("ao_bake_tool.bake_and_combine")

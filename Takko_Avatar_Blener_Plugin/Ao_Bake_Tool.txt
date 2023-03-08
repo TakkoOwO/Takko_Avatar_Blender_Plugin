@@ -1,0 +1,123 @@
+import bpy
+from .Core import Log
+from .Core import Shading
+from .Core import Obj
+
+
+#bpy.types.Scene.ao_bake_tool_target_texture = bpy.props.PointerProperty(type=bpy.types.Image)
+
+
+#https://zhuanlan.zhihu.com/p/546532034 如何安装Pillow
+class Ao_Bake_Tool_OT_Bake_And_Combine(bpy.types.Operator):
+    bl_idname = "ao_bake_tool.bake_and_combine"
+    bl_label = "烘焙并合并图片"
+    bl_description = "烘焙图片，并与之前的图片合并，算法为变亮。此工具目的是让角色做不同的动作，并将不同动作的AO贴图叠加计算，消除死黑区域，以合并出适合骨骼形变的AO贴图"
+
+    def execute(self,context): 
+        
+        #确保安装了Pillow
+        try: from PIL import Image
+        except: return Log.Error_Cancelled(self,"没有安装Pillow,无法执行")
+        
+        #获取全部选中的网格体，和它们上面的的材质，最终确定选择了哪些图像
+        
+        ##确保选中了网格体
+        select_objs = Obj.Selection_All_Get()
+        select_mesh_objs = []
+        for obj in select_objs:
+            if Obj.Type_Get(obj) == "MESH": select_mesh_objs.append(obj)
+        if len(select_mesh_objs) == 0: return Log.Error_Cancelled(self,"未选中任何网格体")
+        
+
+        ##获取选中的网格体中的全部材质球
+        bake_materials = []
+        for obj in select_mesh_objs:
+            slots = Shading.Material_Slot_All_Get(obj)
+            for material_name in slots:
+                if material_name != "" and material_name not in bake_materials:
+                    bake_materials.append(material_name)
+        if len(bake_materials) == 0: return Log.Error_Cancelled(self,"选中物体并不包含材质球")
+
+        ##获取材质球中被选中的Image
+        bake_Images = []
+        for material in bake_materials:
+            acitive_node = Shading.Node_Acive_Get_From_Material(material)
+            if acitive_node != "" and Shading.Node_Type_Get(material,acitive_node) == "TEX_IMAGE":
+                image_name =  Shading.Imgae_Get_From_TexImageNode(material,acitive_node)
+                if image_name != "":
+                    bake_Images.append(image_name)
+        if len(bake_Images) == 0: return Log.Error_Cancelled(self,"选中物体的全部材质球中未选中任何纹理节点，或节点上未指定图片") 
+
+        #将这些图像的数据拷贝
+
+        ##遍历Data里的全部Image名称，查找有无目标Image名称_AoBakeTemp，没有就创建，尺寸不匹配就删了重建
+        # data_images = Shading.Image_All_Get()
+        # for image_name in bake_Images:
+        #     size = Shading.Image_Size_Get(image_name)
+        #     image_name_temp = image_name + "_AoBakeTemp"
+        #     if image_name_temp in data_images:
+        #         size_temp = Shading.Image_Size_Get(image_name_temp)
+        #         if size_temp[0] != size[0] or size_temp[1] != size[1]:
+        #             Shading.Image_Delete(image_name_temp)
+        #             Shading.Image_Create(image_name_temp,size[0],size[1])
+        #     else:
+        #         Shading.Image_Create(image_name_temp,size[0],size[1])
+
+        #     print(bpy.data.images[image_name_temp].pixels[0:4])
+        
+        #拷贝全部图像的Pixel和size
+        pixels_before = []
+        sizes = []
+        
+        for image in bake_Images:
+            Shading.Image_Update(image)
+            pixels_before.append(Shading.Pixels_Get(image))
+            sizes.append(Shading.Image_Size_Get(image))
+        
+        #显示图片（测试用）
+
+        # def Pixel_to_Pillow(pixel,sizeX,sizeY):
+        #     from PIL import Image
+        #     import numpy as np
+        #     array = np.array(pixel)  # 生成数组
+        #     array = array * 255
+        #     array = np.uint8(array)
+        #     array.resize((sizeX, sizeY, 4))
+        #     array = np.flipud(array)
+        #     Pillow_Image = Image.fromarray(array,mode='RGBA')
+        #     Pillow_Image.show()
+        #     return Pillow_Image
+
+        #Pixel_to_Pillow(pixels_before[0],sizes[0][0],sizes[0][1])
+        
+        #烘焙
+        Shading.AO_Bake(False)
+
+        
+        #获取烘焙后的Pixels
+        pixels_after = []
+        for image in bake_Images:
+            Shading.Image_Update(image)
+            pixels_after.append(Shading.Pixels_Get(image))
+
+        #Pixel_to_Pillow(pixels_after[0],sizes[0][0],sizes[0][1])
+
+        count_brighter = 0
+        #对比，并更新
+        for image_index in range(len(bake_Images)):        
+            for pixel_index in range(0,len(pixels_before[image_index]),4):        
+                
+                #如果旧的像素比新的亮，则保留旧的给新的
+                value_Before = pixels_before[image_index][pixel_index]
+                value_After = pixels_after[image_index][pixel_index]
+                if value_After > value_Before:
+                    count_brighter += 1
+                    pixels_before[image_index][pixel_index] = value_After
+                    pixels_before[image_index][pixel_index + 1] = value_After
+                    pixels_before[image_index][pixel_index + 2] = value_After
+
+            #注入
+            Shading.Pixels_Set(bake_Images[image_index],pixels_before[image_index])
+
+        print("共有{}个像素变得更亮".format(count_brighter))
+        return {"FINISHED"}
